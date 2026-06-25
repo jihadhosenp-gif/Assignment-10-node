@@ -60,8 +60,7 @@ async function run() {
           createdAt: new Date(),
         };
 
-        const result =
-          await tasksCollection.insertOne(task);
+        const result = await tasksCollection.insertOne(task);
 
         res.status(201).send(result);
       } catch (error) {
@@ -72,11 +71,25 @@ async function run() {
       }
     });
 
-    // Get All Tasks
+    // Get All Tasks (with optional search & category filter)
     app.get("/api/tasks", async (req, res) => {
       try {
+        const { search, category } = req.query;
+
+        const filter = {};
+
+        // Title search — case-insensitive partial match
+        if (search && search.trim()) {
+          filter.title = { $regex: search.trim(), $options: "i" };
+        }
+
+        // Category exact match
+        if (category && category !== "All") {
+          filter.category = category;
+        }
+
         const result = await tasksCollection
-          .find()
+          .find(filter)
           .sort({ createdAt: -1 })
           .toArray();
 
@@ -100,10 +113,9 @@ async function run() {
           });
         }
 
-        const result =
-          await tasksCollection.findOne({
-            _id: new ObjectId(id),
-          });
+        const result = await tasksCollection.findOne({
+          _id: new ObjectId(id),
+        });
 
         if (!result) {
           return res.status(404).send({
@@ -121,29 +133,23 @@ async function run() {
     });
 
     // Get My Tasks
-    app.get(
-      "/api/my-tasks/:email",
-      async (req, res) => {
-        try {
-          const email = req.params.email;
+    app.get("/api/my-tasks/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
 
-          const result =
-            await tasksCollection
-              .find({
-                client_email: email,
-              })
-              .sort({ createdAt: -1 })
-              .toArray();
+        const result = await tasksCollection
+          .find({ client_email: email })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-          res.send(result);
-        } catch (error) {
-          console.error(error);
-          res.status(500).send({
-            message: "Failed to fetch tasks",
-          });
-        }
+        res.send(result);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          message: "Failed to fetch tasks",
+        });
       }
-    );
+    });
 
     // Update Task
     app.put("/api/tasks/:id", async (req, res) => {
@@ -158,21 +164,18 @@ async function run() {
 
         const task = req.body;
 
-        const result =
-          await tasksCollection.updateOne(
-            {
-              _id: new ObjectId(id),
+        const result = await tasksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              title: task.title,
+              category: task.category,
+              description: task.description,
+              budget: task.budget,
+              deadline: task.deadline,
             },
-            {
-              $set: {
-                title: task.title,
-                category: task.category,
-                description: task.description,
-                budget: task.budget,
-                deadline: task.deadline,
-              },
-            }
-          );
+          }
+        );
 
         res.send(result);
       } catch (error) {
@@ -194,10 +197,9 @@ async function run() {
           });
         }
 
-        const result =
-          await tasksCollection.deleteOne({
-            _id: new ObjectId(id),
-          });
+        const result = await tasksCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
 
         res.send(result);
       } catch (error) {
@@ -209,63 +211,50 @@ async function run() {
     });
 
     // Dashboard Stats
-    app.get(
-      "/api/dashboard-stats/:email",
-      async (req, res) => {
-        try {
-          const email = req.params.email;
+    app.get("/api/dashboard-stats/:email", async (req, res) => {
+      try {
+        const email = req.params.email;
 
-          const totalTasks =
-            await tasksCollection.countDocuments({
-              client_email: email,
-            });
+        const totalTasks = await tasksCollection.countDocuments({
+          client_email: email,
+        });
 
-          const openTasks =
-            await tasksCollection.countDocuments({
-              client_email: email,
-              status: "Open",
-            });
+        const openTasks = await tasksCollection.countDocuments({
+          client_email: email,
+          status: "Open",
+        });
 
-          const inProgress =
-            await tasksCollection.countDocuments({
-              client_email: email,
-              status: "In Progress",
-            });
+        const inProgress = await tasksCollection.countDocuments({
+          client_email: email,
+          status: "In Progress",
+        });
 
-          const completed =
-            await tasksCollection.countDocuments({
-              client_email: email,
-              status: "Completed",
-            });
+        const completed = await tasksCollection.countDocuments({
+          client_email: email,
+          status: "Completed",
+        });
 
-          res.send({
-            totalTasks,
-            openTasks,
-            inProgress,
-            completed,
-            totalSpent: 0,
-          });
-        } catch (error) {
-          console.error(error);
-          res.status(500).send({
-            message:
-              "Failed to load dashboard stats",
-          });
-        }
+        res.send({
+          totalTasks,
+          openTasks,
+          inProgress,
+          completed,
+          totalSpent: 0,
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({
+          message: "Failed to load dashboard stats",
+        });
       }
-    );
+    });
   } catch (error) {
-    console.error(
-      " MongoDB Connection Error:",
-      error
-    );
+    console.error("MongoDB Connection Error:", error);
   }
 }
 
 run();
 
 app.listen(port, () => {
-  console.log(
-    `Server running on port ${port}`
-  );
+  console.log(`Server running on port ${port}`);
 });
