@@ -11,7 +11,6 @@ const {
 const app = express();
 const port = process.env.PORT || 5000;
 
-// Middleware
 app.use(
   cors({
     origin: true,
@@ -44,20 +43,14 @@ async function run() {
     const db = client.db("skill-swap");
     const tasksCollection     = db.collection("tasks");
     const proposalsCollection = db.collection("proposals");
+    const projectsCollection  = db.collection("projects");
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ROOT
-    // ─────────────────────────────────────────────────────────────────────────
-
+   
     app.get("/", (req, res) => {
-      res.send("🚀 SkillSwap Server Running");
+      res.send("SkillSwap Server Running");
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TASKS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    // Create task
+   
     app.post("/api/tasks", async (req, res) => {
       try {
         const task = {
@@ -74,7 +67,6 @@ async function run() {
       }
     });
 
-    // Get all tasks (with search + category filter)
     app.get("/api/tasks", async (req, res) => {
       try {
         const { search, category } = req.query;
@@ -99,7 +91,6 @@ async function run() {
       }
     });
 
-    // Get single task by ID
     app.get("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -121,7 +112,6 @@ async function run() {
       }
     });
 
-    // Get tasks by client email
     app.get("/api/my-tasks/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -136,7 +126,6 @@ async function run() {
       }
     });
 
-    // Update task
     app.put("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -165,7 +154,6 @@ async function run() {
       }
     });
 
-    // Delete task
     app.delete("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
@@ -182,7 +170,6 @@ async function run() {
       }
     });
 
-    // Dashboard stats
     app.get("/api/dashboard-stats/:email", async (req, res) => {
       try {
         const email = req.params.email;
@@ -201,14 +188,7 @@ async function run() {
       }
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PROPOSALS
-    // ─────────────────────────────────────────────────────────────────────────
-
-    // IMPORTANT: /check/:taskId must be defined BEFORE /task/:taskId
-    // otherwise Express matches "check" as a taskId value
-
-    // Check: has this freelancer already applied?
+    
     app.get("/api/proposals/check/:taskId", async (req, res) => {
       try {
         const { taskId } = req.params;
@@ -218,11 +198,16 @@ async function run() {
           return res.status(400).send({ message: "Freelancer email is required" });
         }
 
-        const existing = await proposalsCollection.findOne({
-          taskId,
+        
+        const query = {
           freelancer_email: email,
-        });
+          $or: [
+            { taskId: taskId },
+            ObjectId.isValid(taskId) ? { taskId: new ObjectId(taskId) } : null
+          ].filter(Boolean)
+        };
 
+        const existing = await proposalsCollection.findOne(query);
         res.send({ alreadyApplied: !!existing });
       } catch (error) {
         console.error(error);
@@ -230,7 +215,6 @@ async function run() {
       }
     });
 
-    // Submit a proposal
     app.post("/api/proposals", async (req, res) => {
       try {
         const {
@@ -242,7 +226,6 @@ async function run() {
           freelancer_name,
         } = req.body;
 
-        // ── Field validation ──
         if (!taskId || !proposed_budget || !estimated_days || !cover_note) {
           return res.status(422).send({ message: "All fields are required" });
         }
@@ -259,7 +242,6 @@ async function run() {
           return res.status(422).send({ message: "Cover note must be at least 30 characters" });
         }
 
-        // ── Task exists? ──
         if (!ObjectId.isValid(taskId)) {
           return res.status(400).send({ message: "Invalid Task ID" });
         }
@@ -268,20 +250,21 @@ async function run() {
           return res.status(404).send({ message: "Task not found" });
         }
 
-        // ── Duplicate check ──
+        
         const existing = await proposalsCollection.findOne({
-          taskId,
           freelancer_email,
+          $or: [
+            { taskId: taskId },
+            { taskId: new ObjectId(taskId) }
+          ]
         });
+        
         if (existing) {
           return res.status(409).send({ message: "You have already applied for this task" });
         }
 
-        // ── Save proposal ──
         const proposal = {
-          taskId,
-          taskTitle:        task.title,
-          proposed_budget:  Number(proposed_budget),
+          taskId, 
           estimated_days:   Number(estimated_days),
           cover_note:       cover_note.trim(),
           freelancer_email,
@@ -292,7 +275,6 @@ async function run() {
 
         const result = await proposalsCollection.insertOne(proposal);
 
-        // ── Increment proposals_count on the task ──
         await tasksCollection.updateOne(
           { _id: new ObjectId(taskId) },
           { $inc: { proposals_count: 1 } }
@@ -308,12 +290,17 @@ async function run() {
       }
     });
 
-    // Get all proposals for a task (client view)
     app.get("/api/proposals/task/:taskId", async (req, res) => {
       try {
         const { taskId } = req.params;
+        const query = {
+          $or: [
+            { taskId: taskId },
+            ObjectId.isValid(taskId) ? { taskId: new ObjectId(taskId) } : null
+          ].filter(Boolean)
+        };
         const proposals  = await proposalsCollection
-          .find({ taskId })
+          .find(query)
           .sort({ createdAt: -1 })
           .toArray();
         res.send(proposals);
@@ -323,7 +310,6 @@ async function run() {
       }
     });
 
-    // Get all proposals by a freelancer
     app.get("/api/proposals/freelancer/:email", async (req, res) => {
       try {
         const { email } = req.params;
@@ -335,6 +321,249 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Failed to fetch proposals" });
+      }
+    });
+
+
+    app.get("/api/proposals/client/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        
+      
+        const clientTasks = await tasksCollection
+          .find({ client_email: email })
+          .toArray();
+        
+        if (!clientTasks.length) {
+          return res.send([]);
+        }
+
+       
+        const stringIds = [];
+        const objectIds = [];
+
+        clientTasks.forEach(task => {
+          if (task._id) {
+            stringIds.push(task._id.toString());
+            if (ObjectId.isValid(task._id)) {
+              objectIds.push(new ObjectId(task._id));
+            }
+          }
+        });
+
+       
+        const proposals = await proposalsCollection
+          .find({
+            $or: [
+              { taskId: { $in: stringIds } },
+              { taskId: { $in: objectIds } },
+              { "taskId.$oid": { $in: stringIds } }
+            ]
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(proposals);
+      } catch (error) {
+        console.error("Error fetching client proposals:", error);
+        res.status(500).send({ message: "Failed to fetch client proposals" });
+      }
+    });
+
+    
+    app.patch("/api/proposals/:id/status", async (req, res) => {
+      try {
+        const { id }     = req.params;
+        const { status } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid Proposal ID" });
+        }
+
+        const allowed = ["accepted", "rejected"];
+        if (!allowed.includes(status)) {
+          return res.status(422).send({ message: "Status must be 'accepted' or 'rejected'" });
+        }
+
+        const proposal = await proposalsCollection.findOne({ _id: new ObjectId(id) });
+        if (!proposal) {
+          return res.status(404).send({ message: "Proposal not found" });
+        }
+
+        
+        if (status === "accepted") {
+          const alreadyAccepted = await proposalsCollection.findOne({
+            status: "accepted",
+            $or: [
+              { taskId: proposal.taskId },
+              ObjectId.isValid(proposal.taskId) ? { taskId: new ObjectId(proposal.taskId) } : null
+            ].filter(Boolean)
+          });
+
+          if (alreadyAccepted) {
+            return res.status(409).send({ message: "Another proposal has already been accepted for this task." });
+          }
+        }
+
+        await proposalsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, updatedAt: new Date() } }
+        );
+
+        
+        if (status === "accepted") {
+          const taskQuery = ObjectId.isValid(proposal.taskId) ? { _id: new ObjectId(proposal.taskId) } : { _id: proposal.taskId };
+          const task = await tasksCollection.findOne(taskQuery);
+
+          const projectExists = await projectsCollection.findOne({
+            proposalId: id,
+          });
+
+          if (!projectExists) {
+            await projectsCollection.insertOne({
+              proposalId:       id,
+              taskId:           proposal.taskId,
+              taskTitle:        proposal.taskTitle,
+              freelancer_email: proposal.freelancer_email,
+              freelancer_name:  proposal.freelancer_name,
+              client_email:     task?.client_email  || "",
+              client_name:      task?.client_name   || "",
+              budget:           proposal.proposed_budget,
+              deadline:         task?.deadline       || null,
+              category:         task?.category       || "",
+              status:           "In Progress",
+              deliverable_url:  null,
+              notes:            null,
+              createdAt:        new Date(),
+            });
+
+            
+            if (ObjectId.isValid(proposal.taskId)) {
+              await tasksCollection.updateOne(
+                { _id: new ObjectId(proposal.taskId) },
+                { $set: { status: "In Progress" } }
+              );
+            }
+          }
+        }
+
+        res.send({ message: `Proposal ${status} successfully` });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to update proposal status" });
+      }
+    });
+
+  
+    app.get("/api/projects/freelancer/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const projects  = await projectsCollection
+          .find({ freelancer_email: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(projects);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch projects" });
+      }
+    });
+
+    app.get("/api/projects/client/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const projects  = await projectsCollection
+          .find({ client_email: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(projects);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch projects" });
+      }
+    });
+
+    app.get("/api/projects/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid Project ID" });
+        }
+
+        const project = await projectsCollection.findOne({ _id: new ObjectId(id) });
+        if (!project) {
+          return res.status(404).send({ message: "Project not found" });
+        }
+
+        res.send(project);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch project" });
+      }
+    });
+
+    app.patch("/api/projects/submit-deliverable", async (req, res) => {
+      try {
+        const { projectId, deliverable_url, notes } = req.body;
+
+        if (!projectId || !deliverable_url) {
+          return res.status(422).send({ message: "Project ID and deliverable URL are required" });
+        }
+
+        if (!ObjectId.isValid(projectId)) {
+          return res.status(400).send({ message: "Invalid Project ID" });
+        }
+
+        const project = await projectsCollection.findOne({ _id: new ObjectId(projectId) });
+        if (!project) {
+          return res.status(404).send({ message: "Project not found" });
+        }
+
+        await projectsCollection.updateOne(
+          { _id: new ObjectId(projectId) },
+          {
+            $set: {
+              deliverable_url,
+              notes:       notes || null,
+              status:      "Completed",
+              submittedAt: new Date(),
+            },
+          }
+        );
+
+        if (project.taskId) {
+          const taskQuery = ObjectId.isValid(project.taskId) ? { _id: new ObjectId(project.taskId) } : { _id: project.taskId };
+          await tasksCollection.updateOne(
+            taskQuery,
+            { $set: { status: "Completed" } }
+          );
+        }
+
+        res.send({ message: "Deliverable submitted successfully" });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to submit deliverable" });
+      }
+    });
+
+    app.patch("/api/projects/:id/complete", async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: "Invalid Project ID" });
+        }
+
+        await projectsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "Completed", completedAt: new Date() } }
+        );
+
+        res.send({ message: "Project marked as completed" });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to complete project" });
       }
     });
 
