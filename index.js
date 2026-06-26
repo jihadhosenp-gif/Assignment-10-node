@@ -21,7 +21,6 @@ app.use(
 
 app.use(express.json());
 
-// MongoDB URI
 const uri = process.env.MONGODB_URI;
 
 if (!uri) {
@@ -40,50 +39,50 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     await client.connect();
-
-    console.log("✅ MongoDB Connected Successfully");
+    console.log("MongoDB Connected Successfully");
 
     const db = client.db("skill-swap");
-    const tasksCollection = db.collection("tasks");
+    const tasksCollection     = db.collection("tasks");
+    const proposalsCollection = db.collection("proposals");
 
-    // Root Route
+    // ─────────────────────────────────────────────────────────────────────────
+    // ROOT
+    // ─────────────────────────────────────────────────────────────────────────
+
     app.get("/", (req, res) => {
       res.send("🚀 SkillSwap Server Running");
     });
 
-    // Create Task
+    // ─────────────────────────────────────────────────────────────────────────
+    // TASKS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Create task
     app.post("/api/tasks", async (req, res) => {
       try {
         const task = {
           ...req.body,
-          status: "Open",
-          createdAt: new Date(),
+          status:          "Open",
+          proposals_count: 0,
+          createdAt:       new Date(),
         };
-
         const result = await tasksCollection.insertOne(task);
-
         res.status(201).send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to create task",
-        });
+        res.status(500).send({ message: "Failed to create task" });
       }
     });
 
-    // Get All Tasks (with optional search & category filter)
+    // Get all tasks (with search + category filter)
     app.get("/api/tasks", async (req, res) => {
       try {
         const { search, category } = req.query;
-
         const filter = {};
 
-        // Title search — case-insensitive partial match
         if (search && search.trim()) {
           filter.title = { $regex: search.trim(), $options: "i" };
         }
-
-        // Category exact match
         if (category && category !== "All") {
           filter.category = category;
         }
@@ -96,158 +95,249 @@ async function run() {
         res.send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to fetch tasks",
-        });
+        res.status(500).send({ message: "Failed to fetch tasks" });
       }
     });
 
-    // Get Single Task
+    // Get single task by ID
     app.get("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
         if (!ObjectId.isValid(id)) {
-          return res.status(400).send({
-            message: "Invalid Task ID",
-          });
+          return res.status(400).send({ message: "Invalid Task ID" });
         }
 
-        const result = await tasksCollection.findOne({
-          _id: new ObjectId(id),
-        });
+        const result = await tasksCollection.findOne({ _id: new ObjectId(id) });
 
         if (!result) {
-          return res.status(404).send({
-            message: "Task not found",
-          });
+          return res.status(404).send({ message: "Task not found" });
         }
 
         res.send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to fetch task",
-        });
+        res.status(500).send({ message: "Failed to fetch task" });
       }
     });
 
-    // Get My Tasks
+    // Get tasks by client email
     app.get("/api/my-tasks/:email", async (req, res) => {
       try {
         const email = req.params.email;
-
         const result = await tasksCollection
           .find({ client_email: email })
           .sort({ createdAt: -1 })
           .toArray();
-
         res.send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to fetch tasks",
-        });
+        res.status(500).send({ message: "Failed to fetch tasks" });
       }
     });
 
-    // Update Task
+    // Update task
     app.put("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
         if (!ObjectId.isValid(id)) {
-          return res.status(400).send({
-            message: "Invalid Task ID",
-          });
+          return res.status(400).send({ message: "Invalid Task ID" });
         }
 
         const task = req.body;
-
         const result = await tasksCollection.updateOne(
           { _id: new ObjectId(id) },
           {
             $set: {
-              title: task.title,
-              category: task.category,
+              title:       task.title,
+              category:    task.category,
               description: task.description,
-              budget: task.budget,
-              deadline: task.deadline,
+              budget:      task.budget,
+              deadline:    task.deadline,
             },
           }
         );
-
         res.send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to update task",
-        });
+        res.status(500).send({ message: "Failed to update task" });
       }
     });
 
-    // Delete Task
+    // Delete task
     app.delete("/api/tasks/:id", async (req, res) => {
       try {
         const id = req.params.id;
 
         if (!ObjectId.isValid(id)) {
-          return res.status(400).send({
-            message: "Invalid Task ID",
-          });
+          return res.status(400).send({ message: "Invalid Task ID" });
         }
 
-        const result = await tasksCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-
+        const result = await tasksCollection.deleteOne({ _id: new ObjectId(id) });
         res.send(result);
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to delete task",
-        });
+        res.status(500).send({ message: "Failed to delete task" });
       }
     });
 
-    // Dashboard Stats
+    // Dashboard stats
     app.get("/api/dashboard-stats/:email", async (req, res) => {
       try {
         const email = req.params.email;
 
-        const totalTasks = await tasksCollection.countDocuments({
-          client_email: email,
+        const [totalTasks, openTasks, inProgress, completed] = await Promise.all([
+          tasksCollection.countDocuments({ client_email: email }),
+          tasksCollection.countDocuments({ client_email: email, status: "Open" }),
+          tasksCollection.countDocuments({ client_email: email, status: "In Progress" }),
+          tasksCollection.countDocuments({ client_email: email, status: "Completed" }),
+        ]);
+
+        res.send({ totalTasks, openTasks, inProgress, completed, totalSpent: 0 });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to load dashboard stats" });
+      }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // PROPOSALS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // IMPORTANT: /check/:taskId must be defined BEFORE /task/:taskId
+    // otherwise Express matches "check" as a taskId value
+
+    // Check: has this freelancer already applied?
+    app.get("/api/proposals/check/:taskId", async (req, res) => {
+      try {
+        const { taskId } = req.params;
+        const { email }  = req.query;
+
+        if (!email) {
+          return res.status(400).send({ message: "Freelancer email is required" });
+        }
+
+        const existing = await proposalsCollection.findOne({
+          taskId,
+          freelancer_email: email,
         });
 
-        const openTasks = await tasksCollection.countDocuments({
-          client_email: email,
-          status: "Open",
-        });
+        res.send({ alreadyApplied: !!existing });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to check proposal status" });
+      }
+    });
 
-        const inProgress = await tasksCollection.countDocuments({
-          client_email: email,
-          status: "In Progress",
-        });
+    // Submit a proposal
+    app.post("/api/proposals", async (req, res) => {
+      try {
+        const {
+          taskId,
+          proposed_budget,
+          estimated_days,
+          cover_note,
+          freelancer_email,
+          freelancer_name,
+        } = req.body;
 
-        const completed = await tasksCollection.countDocuments({
-          client_email: email,
-          status: "Completed",
-        });
+        // ── Field validation ──
+        if (!taskId || !proposed_budget || !estimated_days || !cover_note) {
+          return res.status(422).send({ message: "All fields are required" });
+        }
+        if (!freelancer_email) {
+          return res.status(401).send({ message: "Unauthorized — email missing" });
+        }
+        if (Number(proposed_budget) <= 0) {
+          return res.status(422).send({ message: "Budget must be greater than 0" });
+        }
+        if (Number(estimated_days) <= 0) {
+          return res.status(422).send({ message: "Estimated days must be greater than 0" });
+        }
+        if (cover_note.trim().length < 30) {
+          return res.status(422).send({ message: "Cover note must be at least 30 characters" });
+        }
 
-        res.send({
-          totalTasks,
-          openTasks,
-          inProgress,
-          completed,
-          totalSpent: 0,
+        // ── Task exists? ──
+        if (!ObjectId.isValid(taskId)) {
+          return res.status(400).send({ message: "Invalid Task ID" });
+        }
+        const task = await tasksCollection.findOne({ _id: new ObjectId(taskId) });
+        if (!task) {
+          return res.status(404).send({ message: "Task not found" });
+        }
+
+        // ── Duplicate check ──
+        const existing = await proposalsCollection.findOne({
+          taskId,
+          freelancer_email,
+        });
+        if (existing) {
+          return res.status(409).send({ message: "You have already applied for this task" });
+        }
+
+        // ── Save proposal ──
+        const proposal = {
+          taskId,
+          taskTitle:        task.title,
+          proposed_budget:  Number(proposed_budget),
+          estimated_days:   Number(estimated_days),
+          cover_note:       cover_note.trim(),
+          freelancer_email,
+          freelancer_name:  freelancer_name || "",
+          status:           "pending",
+          createdAt:        new Date(),
+        };
+
+        const result = await proposalsCollection.insertOne(proposal);
+
+        // ── Increment proposals_count on the task ──
+        await tasksCollection.updateOne(
+          { _id: new ObjectId(taskId) },
+          { $inc: { proposals_count: 1 } }
+        );
+
+        res.status(201).send({
+          message: "Proposal submitted successfully",
+          id:      result.insertedId,
         });
       } catch (error) {
         console.error(error);
-        res.status(500).send({
-          message: "Failed to load dashboard stats",
-        });
+        res.status(500).send({ message: "Failed to submit proposal" });
       }
     });
+
+    // Get all proposals for a task (client view)
+    app.get("/api/proposals/task/:taskId", async (req, res) => {
+      try {
+        const { taskId } = req.params;
+        const proposals  = await proposalsCollection
+          .find({ taskId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(proposals);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch proposals" });
+      }
+    });
+
+    // Get all proposals by a freelancer
+    app.get("/api/proposals/freelancer/:email", async (req, res) => {
+      try {
+        const { email } = req.params;
+        const proposals = await proposalsCollection
+          .find({ freelancer_email: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(proposals);
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Failed to fetch proposals" });
+      }
+    });
+
   } catch (error) {
     console.error("MongoDB Connection Error:", error);
   }
